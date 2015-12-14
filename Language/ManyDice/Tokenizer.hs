@@ -16,7 +16,7 @@
 -- best as it can into a string, here is extended to include a variable,
 -- expression, or function call into a @legacy@ evaluation.
 
-module Tokenizer (
+module Language.ManyDice.Tokenizer (
 -- * Updating a 'Text.Parsec.Pos.SourcePos'
     Delta(..),
     updatePosDelta,
@@ -47,12 +47,9 @@ module Tokenizer (
     varName,
     funName,
     number,
-    varType
+    varType,
+    liftParsec
     ) where
-
-
-
-
 
 import Prelude hiding (foldl, foldr, sequence, mapM, mapM_)
 import Control.Applicative
@@ -60,8 +57,9 @@ import Control.Monad
 import qualified Data.Text as T
 import Data.Text (Text)
 import Data.Hashable
+import Data.Functor.Identity
 import qualified Text.Parsec as P
-import Text.Parsec (ParsecT, unexpected, (<?>), Stream(..), tokenPrim)
+import Text.Parsec (Parsec, ParsecT, unexpected, (<?>), Stream(..), tokenPrim)
 import qualified Text.Parsec.Pos as P
 import Text.Parsec.Pos (SourcePos, sourceLine, sourceColumn, setSourceLine, setSourceColumn)
 import Data.Data
@@ -71,6 +69,7 @@ import Data.Traversable
 import Data.Char
 import Data.Bits
 import Data.Ix
+import Data.Coerce
 import Data.List (unfoldr)
 
 -- | The type @Delta@ represents a change in a 'Text.Parsec.Pos.SoucePos' by
@@ -447,7 +446,7 @@ toTokens = unfoldr nextToken . toTStream
 
 -- | @tokenP fn@ accepts a token @tok@ when @fn tok@ returns
 -- @'Prelude.Just' x@. It eats 'TBadComment' tokens and produces an error.
-tokenP :: (Monad m) => (Token -> Maybe a) -> ParsecT TStream u m a
+tokenP :: (Token -> Maybe a) -> Parsec TStream u a
 tokenP fn = tokenPrim dpretty gpos dfn >>= badComment where
     dpretty (DeltaToken t _) = tpretty t
     {-# INLINE dpretty #-}
@@ -465,29 +464,37 @@ tokenP fn = tokenPrim dpretty gpos dfn >>= badComment where
     {-# INLINE badComment #-}
 {-# INLINE tokenP #-}
 
+-- | Lift a 'Text.Parsec.Parsec' parser on the 'Data.Functor.Identity' monad
+-- to one on an arbitrary monad.
+liftParsec :: (Monad m) => Parsec TStream u a -> ParsecT TStream u m a
+liftParsec p = let
+    pf = P.runParsecT p
+    pf' s = return $ fmap ((coerce :: (a -> m a) -> (Identity a -> m a)) return) $ runIdentity $ pf s
+    in P.mkPT pf'
+
 -- | @reserved s@ accepts only lowercase words identical to @s@.
-reserved :: (Monad m) => String -> ParsecT TStream u m ()
+reserved :: String -> Parsec TStream u ()
 reserved s = tokenP fn <?> s where
     t = T.pack s
     fn (TFunName tf) = if tf == t then Just () else Nothing
     fn _ = Nothing
 
 -- | Accepts a comparison (@=|!=|[\<>]=?@).
-comp :: (Monad m) => ParsecT TStream u m Comparison
+comp :: Parsec TStream u Comparison
 comp = tokenP fn <?> "comparison" where
     fn (TComparison c) = Just c
     fn _ = Nothing
 
 -- | Accepts a take-closest filter (@\@[\<=>%#]@). These are only produced in
 -- a @legacy@ construct.
-takeClosest :: (Monad m) => ParsecT TStream u m TakeClosest
+takeClosest :: Parsec TStream u TakeClosest
 takeClosest = tokenP fn <?> "take-closest" where
     fn (TClosest c) = Just c
     fn _ = Nothing
 
 -- | Accepts a single character. It works properly when used to match letters,
 -- '\n', and the ellipsis.
-tchar :: (Monad m) => Char -> ParsecT TStream u m Char
+tchar :: Char -> Parsec TStream u Char
 tchar '\8230' = tokenP fn <?> "'..'" where
     fn TEllipsis = Just '\8230'
     fn _ = Nothing
@@ -509,19 +516,19 @@ tchar c = tokenP fn <?> show c where
     fn _ = Nothing
 
 -- | Accepts a quote-delimited string.
-tstring :: (Monad m) => ParsecT TStream u m Text
+tstring :: Parsec TStream u Text
 tstring = tchar '"' *> tokenP fn <* tchar '"' <?> "string" where
     fn (TString t) = Just t
     fn _ = Nothing
 
 -- | Accepts an uppercase variable name.
-varName :: (Monad m) => ParsecT TStream u m Text
+varName :: Parsec TStream u Text
 varName = tokenP fn <?> "variable name" where
     fn (TVarName t) = Just t
     fn _ = Nothing
 
 -- | Accepts a lowercase function word. Does not accept \"d\", though.
-funName :: (Monad m) => ParsecT TStream u m Text
+funName :: Parsec TStream u Text
 funName = tokenP fn <?> "function word" where
     fn (TFunName t) = case T.compareLength t 1 of
         EQ -> if T.head t == 'd' then Nothing else Just t
@@ -529,13 +536,13 @@ funName = tokenP fn <?> "function word" where
     fn _ = Nothing
 
 -- | Accepts a number.
-number :: (Monad m) => ParsecT TStream u m Integer
+number :: Parsec TStream u Integer
 number = tokenP fn <?> "number" where
     fn (TNum n) = Just n
     fn _ = Nothing
 
 -- | Accepts a variable type annotation.
-varType :: (Monad m) => ParsecT TStream u m VarType
+varType :: Parsec TStream u VarType
 varType = tokenP fn <?> "variable type" where
     fn (TChar c) = if c == '?' then Just AnyType else Nothing
     fn (TFunName t) = case T.compareLength t 1 of
