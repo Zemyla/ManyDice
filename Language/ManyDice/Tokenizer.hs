@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveDataTypeable, AutoDeriveTypeable, BangPatterns #-}
 {-# LANGUAGE MultiParamTypeClasses, FlexibleInstances #-}
+{-# OPTIONS -Wall #-}
 
 -- |
 -- Module       : Language.ManyDice.Tokenizer
@@ -52,20 +53,15 @@ module Language.ManyDice.Tokenizer (
     ) where
 
 import Prelude hiding (foldl, foldr, sequence, mapM, mapM_)
-import Control.Applicative
-import Control.Monad
 import qualified Data.Text as T
 import Data.Text (Text)
-import Data.Hashable
 import Data.Functor.Identity
 import qualified Text.Parsec as P
 import Text.Parsec (Parsec, ParsecT, unexpected, (<?>), Stream(..), tokenPrim)
-import qualified Text.Parsec.Pos as P
 import Text.Parsec.Pos (SourcePos, sourceLine, sourceColumn, setSourceLine, setSourceColumn)
 import Data.Data
 import Data.Monoid
 import Data.Foldable
-import Data.Traversable
 import Data.Char
 import Data.Bits
 import Data.Ix
@@ -364,7 +360,7 @@ nextToken = go where
     stripWS ds = case dtUncons ds of
         Just (c, ds')
             | isSpace c -> case dtSpan isSpace ds of
-                (_, ds') -> stripWS ds'
+                (_, ds'') -> stripWS ds''
             | c == '\\' -> case dtSpan ('\\' /=) ds' of
                 (_, dsr) -> case dtUncons dsr of
                     Just ('\\', dsr') -> stripWS dsr'
